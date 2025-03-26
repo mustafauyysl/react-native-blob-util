@@ -11,6 +11,9 @@ import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
 import android.net.Uri;
+import android.net.LinkProperties;
+import android.net.LinkAddress;
+import java.net.Inet4Address;  
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
@@ -388,14 +391,15 @@ public class ReactNativeBlobUtilReq extends BroadcastReceiver implements Runnabl
 
             // wifi only, need ACCESS_NETWORK_STATE permission
             // and API level >= 21
+            boolean targetHostIpAvailable = (this.options.targetHostIp != null && !this.options.targetHostIp.isEmpty());
             if (this.options.wifiOnly) {
-
                 boolean found = false;
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                     ConnectivityManager connectivityManager = (ConnectivityManager) ReactNativeBlobUtilImpl.RCTContext.getSystemService(ReactNativeBlobUtilImpl.RCTContext.CONNECTIVITY_SERVICE);
                     Network[] networks = connectivityManager.getAllNetworks();
-
+                    Network selectedNetwork;
+                    
                     for (Network network : networks) {
 
                         NetworkInfo netInfo = connectivityManager.getNetworkInfo(network);
@@ -409,12 +413,58 @@ public class ReactNativeBlobUtilReq extends BroadcastReceiver implements Runnabl
                             continue;
                         }
 
-                        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                        if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                            continue;
+                        }
+
+                        // if targetHostIpAvailable does not match, fallback to any wifi
+                        if (targetHostIpAvailable) {
+                            String targetHostIp = this.options.targetHostIp;
+
+                            LinkProperties lp = connectivityManager.getLinkProperties(network);
+                            if (lp != null) {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                    // For Android R and above, use DHCP server address
+                                    Inet4Address dhcpServer = lp.getDhcpServerAddress();
+
+                                    if (dhcpServer != null && dhcpServer.getHostAddress().equals(targetHostIp)) {
+                                        clientBuilder.proxy(Proxy.NO_PROXY);
+                                        clientBuilder.socketFactory(network.getSocketFactory());
+                                        found = true;
+                                        break;
+                                    }
+                                } 
+                                // For older versions, check each link address for a matching subnet
+                                List<LinkAddress> linkAddresses = lp.getLinkAddresses();
+                                if (linkAddresses != null && !linkAddresses.isEmpty()) {
+                                    boolean subnetFound = false;
+                                    for (LinkAddress la : linkAddresses) {
+                                        String hostAddress = la.getAddress().getHostAddress();
+                                        if (hostAddress.equals(targetHostIp)) {
+                                            clientBuilder.proxy(Proxy.NO_PROXY);
+                                            clientBuilder.socketFactory(network.getSocketFactory());
+                                            found = true;
+                                            subnetFound = true;
+                                            break;
+                                        }
+                                    }
+                                    if (subnetFound) {
+                                        break;
+                                    }
+                                }
+
+                            }
+                        } 
+                        
+                        // wifiOnly. selects the first interface with wifi transport
+                        if (!found) {
                             clientBuilder.proxy(Proxy.NO_PROXY);
                             clientBuilder.socketFactory(network.getSocketFactory());
                             found = true;
-                            break;
 
+                            if (!targetHostIpAvailable) {
+                                break;
+                            }
                         }
                     }
 
@@ -423,10 +473,12 @@ public class ReactNativeBlobUtilReq extends BroadcastReceiver implements Runnabl
                         releaseTaskResource();
                         return;
                     }
+
+
                 } else {
-                    ReactNativeBlobUtilUtils.emitWarningEvent("ReactNativeBlobUtil: wifiOnly was set, but SDK < 21. wifiOnly was ignored.");
+                    ReactNativeBlobUtilUtils.emitWarningEvent("ReactNativeBlobUtil: wifiOnly or targetHostIp was set, but SDK < 21. wifiOnly was ignored.");
                 }
-            }
+            } 
 
             final Request.Builder builder = new Request.Builder();
             try {
