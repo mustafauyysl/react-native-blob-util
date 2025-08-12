@@ -419,6 +419,7 @@ public class ReactNativeBlobUtilReq extends BroadcastReceiver implements Runnabl
                         } 
                         
                         // wifiOnly. selects the first interface with wifi transport
+                        // if targetHostIp is available and it matches, this selection will be overriden
                         if (!found) {
                             clientBuilder.proxy(Proxy.NO_PROXY);
                             clientBuilder.socketFactory(network.getSocketFactory());
