@@ -402,18 +402,7 @@ public class ReactNativeBlobUtilReq extends BroadcastReceiver implements Runnabl
                     
                     for (Network network : networks) {
 
-                        NetworkInfo netInfo = connectivityManager.getNetworkInfo(network);
-                        NetworkCapabilities caps = connectivityManager.getNetworkCapabilities(network);
-
-                        if (caps == null || netInfo == null) {
-                            continue;
-                        }
-
-                        if (!netInfo.isConnected()) {
-                            continue;
-                        }
-
-                        if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                        if (!isValidWifiNetwork(connectivityManager, network)) {
                             continue;
                         }
 
@@ -421,38 +410,11 @@ public class ReactNativeBlobUtilReq extends BroadcastReceiver implements Runnabl
                         if (targetHostIpAvailable) {
                             String targetHostIp = this.options.targetHostIp;
 
-                            LinkProperties lp = connectivityManager.getLinkProperties(network);
-                            if (lp != null) {
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                    // For Android R and above, use DHCP server address
-                                    Inet4Address dhcpServer = lp.getDhcpServerAddress();
-
-                                    if (dhcpServer != null && dhcpServer.getHostAddress().equals(targetHostIp)) {
-                                        clientBuilder.proxy(Proxy.NO_PROXY);
-                                        clientBuilder.socketFactory(network.getSocketFactory());
-                                        found = true;
-                                        break;
-                                    }
-                                } 
-                                // For older versions, check each link address for a matching subnet
-                                List<LinkAddress> linkAddresses = lp.getLinkAddresses();
-                                if (linkAddresses != null && !linkAddresses.isEmpty()) {
-                                    boolean subnetFound = false;
-                                    for (LinkAddress la : linkAddresses) {
-                                        String hostAddress = la.getAddress().getHostAddress();
-                                        if (hostAddress.equals(targetHostIp)) {
-                                            clientBuilder.proxy(Proxy.NO_PROXY);
-                                            clientBuilder.socketFactory(network.getSocketFactory());
-                                            found = true;
-                                            subnetFound = true;
-                                            break;
-                                        }
-                                    }
-                                    if (subnetFound) {
-                                        break;
-                                    }
-                                }
-
+                            if (networkMatchesTargetIp(connectivityManager, network, targetHostIp)) {
+                                clientBuilder.proxy(Proxy.NO_PROXY);
+                                clientBuilder.socketFactory(network.getSocketFactory());
+                                found = true;
+                                break;
                             }
                         } 
                         
@@ -1062,5 +1024,51 @@ public class ReactNativeBlobUtilReq extends BroadcastReceiver implements Runnabl
         }
 
         return client;
+    }
+
+    /**
+     * Check if a network is a valid connected WiFi network
+     */
+    private boolean isValidWifiNetwork(ConnectivityManager cm, Network network) {
+        NetworkInfo netInfo = cm.getNetworkInfo(network);
+        NetworkCapabilities caps = cm.getNetworkCapabilities(network);
+        
+        if (caps == null || netInfo == null) {
+            return false;
+        }
+        
+        if (!netInfo.isConnected()) {
+            return false;
+        }
+        
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
+    }
+
+    /**
+     * Check if a network matches the target host IP address
+     */
+    private boolean networkMatchesTargetIp(ConnectivityManager cm, Network network, String targetHostIp) {
+        LinkProperties lp = cm.getLinkProperties(network);
+        if (lp == null) return false;
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // For Android R and above, use DHCP server address
+            Inet4Address dhcpServer = lp.getDhcpServerAddress();
+            if (dhcpServer != null && dhcpServer.getHostAddress().equals(targetHostIp)) {
+                return true;
+            }
+        }
+        
+        // Always fall back to linkAddresses check
+        List<LinkAddress> linkAddresses = lp.getLinkAddresses();
+        if (linkAddresses != null && !linkAddresses.isEmpty()) {
+            for (LinkAddress la : linkAddresses) {
+                if (la.getAddress().getHostAddress().equals(targetHostIp)) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
     }
 }
